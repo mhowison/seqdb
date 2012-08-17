@@ -1,0 +1,35 @@
+SeqDB
+=====
+
+Copyright 2011-2012, Brown University, Providence, RI. All Rights Reserved.
+
+See LICENSES/SEQDB.txt for full terms of use.
+
+SeqDB includes source code from BLOSC 1.1.3 (see LICENSES/BLOSC.txt,
+LICENSES/FASTLZ.txt, and LICENSES/H5PY.txt for full terms of use).
+
+For help with configuring, building, and installing SeqDB, see INSTALL.
+
+For an example of how to use SeqDB, see TUTORIAL.
+
+Authors
+-------
+Mark Howison <mhowison@brown.edu>
+
+Overview
+--------
+
+SeqDB is a file format, compressor and storage tool for the raw data produced
+by Next-Generation Sequencing platforms like the Illumina Genome Analyzer,
+Illumina HiSeq 2000, or AB SOLiD 4.
+
+SeqDB offers high-throughput compression of sequence data with similar
+compression ratios to gzip.  It achieves this by combining the existing
+multi-threaded BLOSC compressor with a new data-parallel byte-packing scheme,
+called SeqPack, which interleaves sequence data and quality scores.
+
+Citing
+------
+
+We have a paper under review with IEEE TCBB.
+

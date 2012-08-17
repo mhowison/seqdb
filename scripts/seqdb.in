@@ -1,0 +1,101 @@
+#!/bin/bash
+#
+# SeqDB - storage model for Next Generation Sequencing data
+#
+# Copyright 2011-2012, Brown University, Providence, RI. All Rights Reserved.
+#
+# This file is part of SeqDB.
+#
+# Permission to use, copy, modify, and distribute this software and its
+# documentation for any purpose other than its incorporation into a
+# commercial product is hereby granted without fee, provided that the
+# above copyright notice appear in all copies and that both that
+# copyright notice and this permission notice appear in supporting
+# documentation, and that the name of Brown University not be used in
+# advertising or publicity pertaining to distribution of the software
+# without specific, written prior permission.
+#
+# BROWN UNIVERSITY DISCLAIMS ALL WARRANTIES WITH REGARD TO THIS SOFTWARE,
+# INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR ANY
+# PARTICULAR PURPOSE.  IN NO EVENT SHALL BROWN UNIVERSITY BE LIABLE FOR
+# ANY SPECIAL, INDIRECT OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+# WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+# ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+# OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
+prefix=@prefix@
+exec_prefix=@exec_prefix@
+bindir=@bindir@
+
+usage() {
+	echo "
+usage: seqdb COMMAND [ARGS]
+
+This is a wrapper script for the various components that come
+with SeqDB, a high-throughput storage solution for Next-Generation Sequencing
+data. The following commands are available:
+
+  help       Print this help message
+  version    Print the version
+  cite       Print information on citing SeqDB
+
+  info       Print a summary of a SeqDB file
+  profile    Print a histogram of ID and sequence lengths for a FASTQ file
+  compress   Create a SeqDB file from a FASTQ file
+  extract    Output a SeqDB file in FASTQ format
+  mount      Create a special file containing a SeqDB file in FASTQ format
+  unmount    Remove a previously mounted SeqDB file
+
+To print a help message for a specific command, use either:
+  seqdb help COMMAND
+  seqdb COMMAND -h
+"
+	exit 0
+}
+
+seqdb-cite() {
+	echo "
+Please cite SeqDB as:
+
+[publication under review]
+"
+	exit 0
+}
+
+seqdb-version() {
+	echo "SeqDB @PACKAGE_VERSION@"
+	exit 0
+}
+
+if [ $# -lt 1 ]; then usage; fi
+
+commands="help version cite info profile compress extract mount unmount"
+
+matches=(`compgen -W "$commands" -- $1`)
+
+if [[ ${#matches[@]} -eq 0 ]]
+then
+	echo "unrecognized command: $1"
+	usage
+elif [[ ${#matches[@]} -eq 1 ]]
+then
+	shift
+	if [ $matches == "help" ]
+	then
+		if [ $# -gt 0 ]
+		then
+			"seqdb-$1" -h
+		else
+			usage
+		fi
+	elif [ $matches == "mount" ]
+	then
+		"$bindir/seqdb-$matches" "$@" &
+	else
+		"$bindir/seqdb-$matches" "$@"
+	fi
+else
+	echo "unrecognized command: $1 (? ${matches[@]})"
+	usage
+fi	
+

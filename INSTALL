@@ -1,0 +1,78 @@
+SeqDB Installation
+==================
+
+We plan to add binary packages for Debian/Ubuntu and RedHat/CentOS soon,
+and to make a Homebrew script for OS X. In the meantime, these instructions
+will help you build the package from source.
+
+Prerequisites
+-------------
+
+We have only tested SeqDB on Mac OS X 10.7 and CentOS 5.4, but we have made an
+effort to stick to portable/POSIX standards and believe it will work on
+most flavors of UNIX.
+
+You will need a recent (>= 1.8) version of the HDF5 library as well as a
+C++ compiler like g++ (we recommend >= 4.4).
+
+If your HDF5 library is installed through a package manager (like rpm/yum on
+RedHat or apt-get on Debian) you may also need to install the corresponding
+-dev or -devel package, which will provide the HDF5 header files.
+
+
+Installing from the tar ball
+----------------------------
+
+These instructions assume you are installing to the default location
+(/usr/local) which may require root access. Alternative instructions for
+installing to you home directory are available in the next section.
+
+Download the latest tarball from:
+
+ https://github.com/mhowison/seqdb/downloads
+
+Unpack the tarball:
+
+ tar xf seqdb-X.X.X.tar.gz
+ cd seqdb-X.X.X
+
+Run the configure script:
+
+ ./configure
+
+Alternatively, if your HDF5 library is installed in a non-standard location,
+you will need to specify the full path to it:
+
+ ./configure --with-hdf5=<path/to/hdf5>
+
+Build the executables with:
+
+ make
+
+Then install using sudo:
+
+ sudo make install
+
+Try running the 'seqdb' wrapper script to print a help message:
+
+ seqdb help
+
+Follow the TUTORIAL to test out your installation.
+
+
+Installing to your home directory
+---------------------------------
+
+To install to an alternative location, like your home directory, use the
+--prefix option when configuring:
+
+ ./configure --prefix=$HOME
+
+If you haven't already added your $HOME/bin directory to your path, you will
+need to do this in one of your initialization scripts. For bash, you could do:
+
+ echo "export PATH=$HOME/bin:$PATH" >>~/.bashrc
+ source ~/.bashrc
+
+Now the seqdb wrapper and executables should be in your path.
+
