@@ -12,9 +12,16 @@ For help with configuring, building, and installing SeqDB, see INSTALL.
 
 For an example of how to use SeqDB, see TUTORIAL.
 
+
 Authors
 -------
+
 Mark Howison <mhowison@brown.edu>
+
+For support or bug reports, please create an issue at GitHub:
+
+https://github.com/mhowison/seqdb/issues
+
 
 Overview
 --------
@@ -27,6 +34,7 @@ SeqDB offers high-throughput compression of sequence data with similar
 compression ratios to gzip.  It achieves this by combining the existing
 multi-threaded BLOSC compressor with a new data-parallel byte-packing scheme,
 called SeqPack, which interleaves sequence data and quality scores.
+
 
 Citing
 ------

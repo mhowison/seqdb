@@ -1,1 +1,1 @@
-dist_bin_SCRIPTS = seqdb seqdb-mount seqdb-unmount
+dist_bin_SCRIPTS = seqdb

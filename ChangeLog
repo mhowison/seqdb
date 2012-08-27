@@ -1,0 +1,290 @@
+diff --git a/README b/README
+index f0ca3c8..2c65224 100644
+--- a/README
++++ b/README
+@@ -12,10 +12,17 @@ For help with configuring, building, and installing SeqDB, see INSTALL.
+ 
+ For an example of how to use SeqDB, see TUTORIAL.
+ 
++
+ Authors
+ -------
++
+ Mark Howison <mhowison@brown.edu>
+ 
++For support or bug reports, please create an issue at GitHub:
++
++https://github.com/mhowison/seqdb/issues
++
++
+ Overview
+ --------
+ 
+@@ -28,6 +35,7 @@ compression ratios to gzip.  It achieves this by combining the existing
+ multi-threaded BLOSC compressor with a new data-parallel byte-packing scheme,
+ called SeqPack, which interleaves sequence data and quality scores.
+ 
++
+ Citing
+ ------
+ 
+diff --git a/TUTORIAL b/TUTORIAL
+index 9dfcdb3..797dd69 100644
+--- a/TUTORIAL
++++ b/TUTORIAL
+@@ -30,12 +30,15 @@ running on a dual-core MacBook Pro laptop used 2 threads.
+ 
+ We can mount the SeqDB file as a FASTQ file using the mount command:
+ 
+-  $ seqdb mount test.seqdb test-mount.fq
++  $ seqdb mount test.seqdb test-mount.fq &
+ 
+ You will immediately see a message indicating that the mount has been started
+-as a background process:
++as a background process and the SeqDB file has been opened:
+ 
+   seqdb-mount: mounting test.seqdb at test-mount.fq
++  seqdb: using BLOSC 1.1.3 ($Date:: 2010-11-16 #$) with 2 thread(s)
++  seqdb: found 10000 records at 'test.seqdb:/seqdb'
++  seqdb: sequence length is 100, ID length is 54
+ 
+ Press enter to return to the prompt.
+ 
+@@ -44,16 +47,14 @@ You can browse the records in the mounted FASTQ file using the more command
+ 
+   $ more -f test-mount.fq
+ 
+-This first access to the mount will generate a message that the SeqDB file has
+-been opened:
+-
+-  seqdb: using BLOSC 1.1.3 ($Date:: 2010-11-16 #$) with 2 thread(s)
+-  seqdb: found 10000 records at 'test.seqdb:/seqdb'
+-  seqdb: sequence length is 100, ID length is 54
++Now hit the 'q' key and enter, to quit more. This will end the access to the
++mounted file (sending a signal called 'SIGPIPE') and you will see a message
++that it has been automatically unmounted:
+ 
+-Now hit the 'q' key and enter, to quit more. This will end the access to
+-the mounted file and you will see a message that it has been automatically
+-unmounted:
++  seqdb-mount: caught SIGPIPE
++  seqdb-mount: unmounting test-mount.fq
+ 
+-  seqdb-mount: reached end of test.seqdb, unmounting test-mount.fq
++The mount will also be cleaned up when you reach the end of the file, or if the
++background process ends (e.g. if it is killed, or you interrupt it with
++CTRL-C).
+ 
+diff --git a/configure.ac b/configure.ac
+index 8109ae3..e94a5cf 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -1,5 +1,5 @@
+ AC_PREREQ(2.61)
+-AC_INIT([seqdb], [0.1.0], [mhowison@brown.edu])
++AC_INIT([seqdb], [0.1.1], [mhowison@brown.edu])
+ AC_CONFIG_HEADER(config.h)
+ 
+ AM_INIT_AUTOMAKE
+diff --git a/scripts/Makefile.am b/scripts/Makefile.am
+index 263fcac..0331856 100644
+--- a/scripts/Makefile.am
++++ b/scripts/Makefile.am
+@@ -1 +1 @@
+-dist_bin_SCRIPTS = seqdb seqdb-mount seqdb-unmount
++dist_bin_SCRIPTS = seqdb
+diff --git a/src/Makefile.am b/src/Makefile.am
+index e6ffa4e..35fc691 100644
+--- a/src/Makefile.am
++++ b/src/Makefile.am
+@@ -1,5 +1,5 @@
+ lib_LIBRARIES = libseqdb.a
+-bin_PROGRAMS = seqdb-compress seqdb-extract seqdb-profile
++bin_PROGRAMS = seqdb-compress seqdb-extract seqdb-profile seqdb-mount
+ 
+ libseqdb_a_SOURCES = \
+ 	seq.cpp seqpack.cpp seqdb.cpp h5seqdb.cpp fastq.cpp \
+@@ -12,4 +12,5 @@ LDADD = libseqdb.a
+ seqdb_compress_SOURCES = seqdb-compress.cpp
+ seqdb_extract_SOURCES = seqdb-extract.cpp
+ seqdb_profile_SOURCES = seqdb-profile.cpp
++seqdb_mount_SOURCES = seqdb-mount.cpp
+ 
+diff --git a/src/seqdb-mount.cpp b/src/seqdb-mount.cpp
+new file mode 100644
+index 0000000..2b61035
+--- /dev/null
++++ b/src/seqdb-mount.cpp
+@@ -0,0 +1,172 @@
++/*
++ * SeqDB - storage model for Next Generation Sequencing data
++ *
++ * Copyright 2011-2012, Brown University, Providence, RI. All Rights Reserved.
++ *
++ * This file is part of SeqDB.
++ *
++ * Permission to use, copy, modify, and distribute this software and its
++ * documentation for any purpose other than its incorporation into a
++ * commercial product is hereby granted without fee, provided that the
++ * above copyright notice appear in all copies and that both that
++ * copyright notice and this permission notice appear in supporting
++ * documentation, and that the name of Brown University not be used in
++ * advertising or publicity pertaining to distribution of the software
++ * without specific, written prior permission.
++ *
++ * BROWN UNIVERSITY DISCLAIMS ALL WARRANTIES WITH REGARD TO THIS SOFTWARE,
++ * INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR ANY
++ * PARTICULAR PURPOSE.  IN NO EVENT SHALL BROWN UNIVERSITY BE LIABLE FOR
++ * ANY SPECIAL, INDIRECT OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
++ * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
++ * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
++ * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
++ *
++ */
++
++#include <stdlib.h>
++#include <stdio.h>
++#include <fcntl.h>
++#include <sys/types.h>
++#include <sys/stat.h>
++#include <unistd.h>
++#include <signal.h>
++#include <iostream>
++#include <vector>
++#include "seqdb.h"
++
++#define PROGNAME "seqdb-mount"
++#include "util.h"
++
++using namespace std;
++
++void print_usage()
++{
++	cout << "\n"
++"usage: "PROGNAME" SEQDB MOUNT\n"
++"\n"
++"Outputs the SEQDB file in FASTQ format at the specified MOUNT path."
++"\n"
++"A named pipe is created at the MOUNT path with the mkfifo system call."
++"Then the contents of the SEQDB file are streamed to the pipe in FASTQ format."
++"\n"
++"This process must remain active while the mount is in use.\n"
++"\n"
++"Example usage:\n"
++PROGNAME" 1.seqdb /tmp/1.fq\n"
++	<< endl;
++}
++
++static const char* mnt_path = NULL;
++static FILE* mnt_out = NULL;
++
++static void unmount()
++{
++	NOTIFY("unmounting " << mnt_path)
++
++	if (mnt_out != NULL) {
++		errno = 0;
++		fclose(mnt_out);
++		if (errno != 0)
++			PERROR("cannot close mount point " << mnt_path)
++	}
++
++	errno = 0;
++	unlink(mnt_path);
++	if (errno != 0)
++		PERROR("cannot unlink mount point " << mnt_path)
++}
++
++void handler(int signal)
++{
++	switch (signal) {
++		case SIGHUP:
++			NOTIFY("caught SIGHUP")
++			break;
++		case SIGINT:
++			NOTIFY("caught SIGINT")
++			break;
++		case SIGKILL:
++			NOTIFY("caught SIGKILL")
++			break;
++		case SIGPIPE:
++			NOTIFY("caught SIGPIPE")
++			break;
++		case SIGTERM:
++			NOTIFY("caught SIGTERM")
++			break;
++	}
++
++	unmount();
++	exit(EXIT_FAILURE);
++}
++
++int main(int argc, char** argv)
++{
++	int c;
++	while ((c = getopt(argc, argv, "hv")) != -1)
++		switch (c) {
++			case 'v':
++				PRINT_VERSION
++				return EXIT_SUCCESS;
++			case 'h':
++			default:
++				print_usage();
++				return EXIT_SUCCESS;
++		}
++
++	if (argc - optind < 2)
++		ARG_ERROR("not enough parameters")
++
++	const char* input_path = argv[optind];
++	mnt_path = argv[optind+1];
++
++	/* Open the input. */
++
++	NOTIFY("mounting " << input_path << " at " << mnt_path)
++
++	SeqDB* db = SeqDB::open(input_path);
++
++	/* Create the mount point as a FIFO. */
++
++	errno = 0;
++	mkfifo(mnt_path, S_IRUSR | S_IWUSR);
++	if (errno != 0)
++		PERROR("cannot create mount point " << mnt_path)
++
++	/* Setup signal handlers. */
++
++	signal(SIGHUP, &handler);
++	signal(SIGINT, &handler);
++	signal(SIGKILL, &handler);
++	signal(SIGPIPE, &handler);
++	signal(SIGTERM, &handler);
++
++	/* Open the mount point. */
++
++	errno = 0;
++	int fd = open(mnt_path, O_WRONLY);
++	if (errno != 0)
++		PERROR("cannot open mount point " << mnt_path)
++
++	errno = 0;
++	mnt_out = fdopen(fd, "w");
++	if (errno != 0)
++		PERROR("cannot open mount point as stream")
++
++	/* Output to the mount point in 1MB buffers. */
++
++	setvbuf(mnt_out, NULL, _IOFBF, 1024*1024);
++
++	db->exportFASTQ(mnt_out);
++
++	/* Cleanup. */
++
++	NOTIFY("reached end of file")
++
++	delete db;
++	unmount();
++	
++	return EXIT_SUCCESS;
++}
++

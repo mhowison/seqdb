@@ -1,5 +1,5 @@
 lib_LIBRARIES = libseqdb.a
-bin_PROGRAMS = seqdb-compress seqdb-extract seqdb-profile
+bin_PROGRAMS = seqdb-compress seqdb-extract seqdb-profile seqdb-mount
 
 libseqdb_a_SOURCES = \
 	seq.cpp seqpack.cpp seqdb.cpp h5seqdb.cpp fastq.cpp \
@@ -12,4 +12,5 @@ LDADD = libseqdb.a
 seqdb_compress_SOURCES = seqdb-compress.cpp
 seqdb_extract_SOURCES = seqdb-extract.cpp
 seqdb_profile_SOURCES = seqdb-profile.cpp
+seqdb_mount_SOURCES = seqdb-mount.cpp
 

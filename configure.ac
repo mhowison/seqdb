@@ -1,5 +1,5 @@
 AC_PREREQ(2.61)
-AC_INIT([seqdb], [0.1.0], [mhowison@brown.edu])
+AC_INIT([seqdb], [0.1.1], [mhowison@brown.edu])
 AC_CONFIG_HEADER(config.h)
 
 AM_INIT_AUTOMAKE

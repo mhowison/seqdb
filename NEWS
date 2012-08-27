@@ -1,0 +1,5 @@
+0.1.1
+=====
+
+* Added a new C++ mount tool (seqdb-mount) to replace the earlier bash script.
+
