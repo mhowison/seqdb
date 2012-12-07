@@ -26,6 +26,7 @@
 
 #include <stdlib.h>
 #include <stdio.h>
+#include <unistd.h>
 #include <iostream>
 #include <vector>
 #include "seqdb.h"
@@ -38,20 +39,28 @@ using namespace std;
 void print_usage()
 {
 	cout << "\n"
-"usage: "PROGNAME" SEQDB\n"
+"usage: "PROGNAME" [-i ID] SEQDB\n"
 "\n"
 "Converts the SEQDB input file to FASTQ format, printing to stdout.\n"
 "\n"
+"  -i  extract only the record at the 1-based index ID\n"
+"\n"
 "Example usage:\n"
 PROGNAME" 1.seqdb >1.fastq\n"
+PROGNAME" -i 1705 1.seqdb\n"
 	<< endl;
 }
 
 int main(int argc, char** argv)
 {
+	size_t id = 0;
+
 	int c;
-	while ((c = getopt(argc, argv, "hv")) != -1)
+	while ((c = getopt(argc, argv, "i:hv")) != -1)
 		switch (c) {
+			case 'i':
+				id = (size_t)strtoul(optarg, NULL, 10);
+				break;
 			case 'v':
 				PRINT_VERSION
 				return EXIT_SUCCESS;
@@ -67,10 +76,17 @@ int main(int argc, char** argv)
 	/* Open the input. */
 	SeqDB* db = SeqDB::open(argv[optind]);
 
-	ios_base::sync_with_stdio(false);
-	setvbuf(stdout, NULL, _IOFBF, 1024*1024);
-
-	db->exportFASTQ(stdout);
+	if (id > 0) {
+		/* Read a single record */
+		Sequence seq;
+		db->readAt(id, seq);
+		cout << seq;
+	} else {
+		/* Dump all records, and adjust stdout buffer for efficiency */
+		ios_base::sync_with_stdio(false);
+		setvbuf(stdout, NULL, _IOFBF, 1024*1024);
+		db->exportFASTQ(stdout);
+	}
 
 	/* Cleanup. */
 	delete db;

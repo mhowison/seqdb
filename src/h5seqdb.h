@@ -22,6 +22,7 @@ class H5SeqDB : public SeqDB {
 		/* functions */
 		void open_file(const char* filename, hid_t mode);
 		void open_datasets(const char* path);
+		void read_array_attribute(const char* name, hid_t type, hsize_t n, void* array);
 		void create_file(const char* filename, hid_t mode);
 		void create_datasets(const char* path);
 		void write_array_attribute(const char* name, hid_t type, hsize_t n, const void* array);

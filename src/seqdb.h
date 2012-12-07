@@ -3,6 +3,7 @@
 
 #include <stdio.h>
 #include <string>
+#include "seqdb-version.h"
 #include "seqpack.h"
 #include "seq.h"
 #include "fastq.h"
@@ -20,11 +21,11 @@ class SeqDB {
 
 		/* virtual functions */
 		virtual ~SeqDB();
-		virtual void write(const Sequence& seq);
-		virtual bool read(Sequence& seq);
-		virtual void readAt(size_t i, Sequence& seq);
-		virtual void importFASTQ(FASTQ* f);
-		virtual void exportFASTQ(FILE* f);
+		virtual void write(const Sequence& seq) = 0;
+		virtual bool read(Sequence& seq) = 0;
+		virtual void readAt(size_t i, Sequence& seq) = 0;
+		virtual void importFASTQ(FASTQ* f) = 0;
+		virtual void exportFASTQ(FILE* f) = 0;
 
 		/* data */
 		static const char READ = 0x00;

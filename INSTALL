@@ -1,27 +1,45 @@
 SeqDB Installation
 ==================
 
-We plan to add binary packages for Debian/Ubuntu and RedHat/CentOS soon,
-and to make a Homebrew script for OS X. In the meantime, these instructions
-will help you build the package from source.
-
-Prerequisites
--------------
-
-We have only tested SeqDB on Mac OS X 10.7 and CentOS 5.4, but we have made an
-effort to stick to portable/POSIX standards and believe it will work on
+We have only tested SeqDB on Mac OS X 10.7/10.8 and CentOS 5.4/6.3, but we have
+made an effort to stick to portable/POSIX standards and believe it will work on
 most flavors of UNIX.
 
 You will need a recent (>= 1.8) version of the HDF5 library as well as a
-C++ compiler like g++ (we recommend >= 4.4).
-
-If your HDF5 library is installed through a package manager (like rpm/yum on
-RedHat or apt-get on Debian) you may also need to install the corresponding
--dev or -devel package, which will provide the HDF5 header files.
+C++ compiler (we recommend g++ >= 4.4).
 
 
-Installing from the tar ball
-----------------------------
+Mac OS X
+--------
+
+An easy way to install the HDF5 prerequisite is through Homebrew:
+
+ https://github.com/mxcl/homebrew/wiki/installation
+
+Once Homebrew is installed, run:
+
+ brew install hdf5
+
+To obtain a compiler, you can install the command-line developer tools
+available here (you will need to register for an Apple ID):
+
+ https://developer.apple.com/downloads
+
+Now jump to "Building from source" below.
+
+
+Redhat/Fedora/CentOS
+--------------------
+
+You can install the prerequisites with yum:
+
+ sudo yum install hdf5 hdf5-dev
+
+Now jump to "Building from source" below.
+
+
+Building from source
+--------------------
 
 These instructions assume you are installing to the default location
 (/usr/local) which may require root access. Alternative instructions for

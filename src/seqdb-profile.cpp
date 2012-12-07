@@ -26,6 +26,7 @@
 
 #include <stdlib.h>
 #include <stdio.h>
+#include <unistd.h>
 #include <iostream>
 #include <vector>
 #include "seqdb.h"
@@ -51,6 +52,7 @@ void profile(FASTQ* input)
 {
 	vector<size_t> ilen(101, 0);
 	vector<size_t> slen(101, 0);
+	vector<size_t> qval(95, 0);
 	Sequence seq;
 
 	size_t n = 0;
@@ -67,6 +69,13 @@ void profile(FASTQ* input)
 		if (s != q) ERROR("mismatching sequence and quality size at read " << n)
 		if (s >= slen.size()) slen.resize(s+1, 0);
 		slen[s]++;
+
+		for (size_t j=0; j<s; j++) {
+			int qual = (int)seq.qual.at(j);
+			if (qual < 33 || qual > 127)
+				ERROR("non-phred33 quality score at read " << n)
+			qval[qual - 33]++;
+		}
 	}
 
 	fprintf(stderr, "  total reads: %12lu\n", n);
@@ -79,6 +88,10 @@ void profile(FASTQ* input)
 	for (size_t i=0; i<slen.size(); i++)
 		if (slen[i] > 0)
 			fprintf(stderr, "         %5lu %12lu\n", i, slen[i]);
+	cerr << "  phred33 quality scores:" << endl;
+	for (size_t i=0; i<qval.size(); i++)
+		if (qval[i] > 0)
+			fprintf(stderr, "         %5lu %12lu\n", i, qval[i]);
 }
 
 int main(int argc, char** argv)

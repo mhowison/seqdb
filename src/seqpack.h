@@ -16,6 +16,10 @@ class SeqPack {
 		const uint8_t* getEncQual() { return enc_qual; }
 		const char* getDecBase() { return dec_base; }
 		const char* getDecQual() { return dec_qual; }
+		void setEncBase(const uint8_t* _enc_base, size_t len);
+		void setEncQual(const uint8_t* _enc_qual, size_t len);
+		void setDecBase(const char* _dec_base, size_t len);
+		void setDecQual(const char* _dec_qual, size_t len);
 		void pack(const char* seq, const char* qual, uint8_t* record);
 		void parpack(size_t n, const char* src, uint8_t* dst);
 		void unpack(const uint8_t* record, char* seq, char* qual);

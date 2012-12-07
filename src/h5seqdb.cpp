@@ -35,6 +35,8 @@
 #define PROGNAME "seqdb"
 #include "util.h"
 
+#define BLOSC_LEVEL 4
+
 #ifndef H5SEQDB_MALLOC_ALIGN
 #define H5SEQDB_MALLOC_ALIGN 64
 #endif
@@ -123,9 +125,41 @@ void H5SeqDB::open_datasets(const char* path)
 	ilen = idims[1];
 	NOTIFY("sequence length is " << slen << ", ID length is " << ilen)
 
+	/* Read SeqPack tables from attributes. */
+	uint8_t enc[SEQPACK_ENC_SIZE];
+	read_array_attribute(H5SEQDB_ENC_BASE_ATTR,
+			H5T_NATIVE_UINT8, SEQPACK_ENC_SIZE, enc);
+	pack->setEncBase(enc, SEQPACK_ENC_SIZE);
+	read_array_attribute(H5SEQDB_ENC_QUAL_ATTR,
+			H5T_NATIVE_UINT8, SEQPACK_ENC_SIZE, enc);
+	pack->setEncQual(enc, SEQPACK_ENC_SIZE);
+
+	char dec[SEQPACK_DEC_SIZE];
+	read_array_attribute(H5SEQDB_DEC_BASE_ATTR,
+			H5T_NATIVE_CHAR, SEQPACK_DEC_SIZE, dec);
+	pack->setDecBase(dec, SEQPACK_DEC_SIZE);
+	read_array_attribute(H5SEQDB_DEC_QUAL_ATTR,
+			H5T_NATIVE_CHAR, SEQPACK_DEC_SIZE, dec);
+	pack->setDecQual(dec, SEQPACK_DEC_SIZE);
+
 	/* Cleanup. */
 	//H5TRY(H5Pclose(dapl))
 	H5TRY(H5Gclose(group))
+}
+
+void H5SeqDB::read_array_attribute(
+		const char* name,
+		hid_t type,
+		hsize_t n,
+		void* array)
+{
+	hid_t attr = H5Aopen(h5file, name, H5P_DEFAULT);
+	H5CHK(attr)
+
+	H5TRY(H5Aread(attr, type, array))
+
+	/* Cleanup. */
+	H5TRY(H5Aclose(attr))
 }
 
 void H5SeqDB::create_file(const char* filename, hid_t mode)
@@ -160,7 +194,7 @@ void H5SeqDB::create_datasets(const char* path)
 
 	/* BLOSC compression. */
 	unsigned cd[6];
-	cd[4] = 4;
+	cd[4] = BLOSC_LEVEL;
 	cd[5] = 0;
 	H5TRY(H5Pset_filter(idcpl, FILTER_BLOSC, H5Z_FLAG_OPTIONAL, 6, cd))
 	H5TRY(H5Pset_filter(sdcpl, FILTER_BLOSC, H5Z_FLAG_OPTIONAL, 6, cd))

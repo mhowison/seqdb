@@ -26,23 +26,39 @@
 
 #include <stdlib.h>
 #include <string.h>
-#include <sys/time.h>
 #include <iostream>
 #include <vector>
 #include <omp.h>
+#include <zlib.h>
+#include <numa.h>
 #include "fastq.h"
 #include "seqdb.h"
 #include "blosc.h"
-#include "zlib.h"
-
-#if LIKWID
-extern "C" {
-#include "likwid.h"
-}
-#endif
+#include "papi-util.h"
 
 #define PROGNAME "benchmem"
 #include "util.h"
+
+#if PIN_CORE0
+#define _GNU_SOURCE
+#include <sched.h>
+#endif
+
+#define TIC(label)\
+	zero_papi_counters(&counters);\
+	start_papi_counters(&counters);
+
+#define TOC(label)\
+	stop_papi_counters(&counters);\
+	sprintf(prefix, STRINGIFY(label) "\t%zu", nreads);\
+	print_papi_counters(prefix, &counters);
+
+#define CHECK(buf)\
+	if (memcmp(buffer, buf, LEN * nreads) != 0) ERROR("buffers do not match");
+
+#define ZERO(buf) \
+	flush_cache();\
+	memset(buf, 0x00, nbytes);
 
 using namespace std;
 
@@ -51,35 +67,67 @@ using namespace std;
 #define LEN 256
 #define ULEN 156
 
-#define BLOCKSIZE 256*1024*1024
+#define BLOCKSIZE (256*1024*1024)
+#define FLUSHSIZE (8*1024*1024)
 
-size_t test_blosc_compress(
+#define BLOSC_LEVEL 4
+
+static int nthreads;
+
+static void flush_cache()
+{
+#pragma omp parallel
+{
+	const size_t nbytes = FLUSHSIZE*sizeof(long);
+	long* buf = (long*)numa_alloc_local(nbytes);
+	if (!buf) ERROR("failed to malloc flush buffer (" << nbytes << " bytes)")
+
+	#pragma omp for
+	for (size_t i=0; i<FLUSHSIZE; i++) buf[i] = random();
+
+	numa_free(buf, nbytes);
+} // parallel
+}
+
+static size_t test_blosc_compress(
 		void* buffer1,
 		void* buffer2,
 		vector<size_t>& index,
 		size_t len,
 		size_t nreads,
+		size_t nbytes,
 		int level)
 {
 	char* src = (char*)buffer2;
 	char* dst = (char*)buffer1;
-	size_t blocksize = BLOCKSIZE;
 	size_t bytes_left = len * nreads;
-	size_t nbytes, cbytes, nblock;
+	size_t blocksize = BLOCKSIZE;
+	size_t dstsize = nbytes;
 	while (bytes_left > 0) {
 		if (bytes_left < blocksize) blocksize = bytes_left;
-		blosc_compress(level, 0, 1, blocksize,
-				src, dst, blocksize + BLOSC_MAX_OVERHEAD); 
-		blosc_cbuffer_sizes(dst, &nbytes, &cbytes, &nblock);
+		if (dstsize < blocksize + BLOSC_MAX_OVERHEAD)
+			ERROR("buffer too small for blosc_compress")
+#if DEBUG
+		fprintf(stderr, "benchmem: blosc_compress: %zu bytes left\n", bytes_left);
+		fprintf(stderr, "benchmem: blosc_compress: %zu byte block\n", blocksize);
+#endif
+		int cbytes = blosc_compress(level, 0, 1, blocksize, src, dst,
+											blocksize + BLOSC_MAX_OVERHEAD);
+		if (cbytes < 0) { ERROR("blosc_compress error " << cbytes); }
+		else if (cbytes == 0) { ERROR("blosc_compress: unable to compress"); }
+#if DEBUG
+		fprintf(stderr, "benchmem: blosc_compress: %d / %zu bytes\n", cbytes, blocksize);
+#endif
 		src += blocksize;
 		bytes_left -= blocksize;
 		index.push_back(cbytes);
 		dst += cbytes;
+		dstsize -= cbytes;
 	}
 	return blocksize;
 }
 
-void test_blosc_decompress(
+static void test_blosc_decompress(
 		void* buffer1,
 		void* buffer2,
 		vector<size_t>& index,
@@ -89,18 +137,27 @@ void test_blosc_decompress(
 	char* dst = (char*)buffer2;
 	size_t blocksize = BLOCKSIZE;
 	for (unsigned i=0; i<(index.size()-1); i++) {
-		blosc_decompress(src, dst, blocksize);
+		int cbytes = blosc_decompress(src, dst, blocksize);
+		if (cbytes <= 0) ERROR("blosc_decompress error");
+#if DEBUG
+		fprintf(stderr, "benchmem: blosc_decompress: %d / %zu bytes\n", cbytes, blocksize);
+#endif
 		src += index[i];
 		dst += blocksize;
 	}
-	blosc_decompress(src, dst, last_blocksize);
+	int cbytes = blosc_decompress(src, dst, last_blocksize);
+	if (cbytes <= 0) ERROR("blosc_decompress error");
+#if DEBUG
+	fprintf(stderr, "benchmem: blosc_decompress: %d / %zu bytes\n", cbytes, last_blocksize);
+#endif
 }
 
-size_t test_zlib_compress(
+static size_t test_zlib_compress(
 		void* buffer1,
 		void* buffer2,
 		vector<size_t>& index,
 		size_t nreads,
+		size_t nbytes,
 		int level
 		)
 {
@@ -110,18 +167,21 @@ size_t test_zlib_compress(
 	size_t bytes_left = LEN * nreads;
 	while (bytes_left > 0) {
 		if (bytes_left < blocksize) blocksize = bytes_left;
-		uLongf cbytes = compressBound(blocksize);
+		uLongf cbytes = nbytes;
 		int ret = compress2(dst, &cbytes, src, blocksize, level);
 		if (ret != Z_OK) ERROR(zError(ret))
 		src += blocksize;
 		bytes_left -= blocksize;
 		index.push_back(cbytes);
 		dst += cbytes;
+#if DEBUG
+		fprintf(stderr, "benchmem: zlib_compress: %lu / %zu bytes\n", cbytes, blocksize);
+#endif
 	}
 	return blocksize;
 }
 
-void test_zlib_decompress(
+static void test_zlib_decompress(
 		void* buffer1,
 		void* buffer2,
 		vector<size_t>& index,
@@ -134,16 +194,32 @@ void test_zlib_decompress(
 		uLongf ubytes = blocksize;
 		int ret = uncompress(dst, &ubytes, src, index[i]);
 		if (ret != Z_OK) ERROR(zError(ret))
+#if DEBUG
+		fprintf(stderr, "benchmem: zlib_decompress: %lu bytes\n", ubytes);
+#endif
 		src += index[i];
 		dst += blocksize;
 	}
 	uLongf ubytes = last_blocksize;
 	int ret = uncompress(dst, &ubytes, src, index.back());
 	if (ret != Z_OK) ERROR(zError(ret))
+#if DEBUG
+	fprintf(stderr, "benchmem: zlib_decompress: %lu bytes\n", ubytes);
+#endif
 }
 
 int main(int argc, char** argv)
 {
+	/* set thread affinity to core 0
+	 * WARNING: OpenMP threads inherit this CPU mask and it
+	 * overrides KMP_AFFINITY! */
+#if PIN_CORE0
+	cpu_set_t cpu_set;
+	CPU_ZERO(&cpu_set);
+	CPU_SET(0, &cpu_set);
+	sched_setaffinity(0, sizeof(cpu_set_t), &cpu_set);
+#endif
+
 	if (argc < 2) {
 		cerr << "benchmem: please specify an input FASTQ file" << endl;
 		exit(0);
@@ -153,32 +229,50 @@ int main(int argc, char** argv)
 	}
 	const char* filename = argv[1];
 	size_t nreads = atol(argv[2]);
-	size_t nbytes = compressBound(LEN * nreads);
+	size_t seq_offset = ILEN * nreads;
+	cout << "benchmem: preparing for " << nreads << " reads" << endl;
+	size_t nblocks = (LEN * nreads - 1) / BLOCKSIZE + 1;
+	size_t nbytes = compressBound(LEN * nreads) + nblocks * BLOSC_MAX_OVERHEAD;
 	size_t nfound = 0;
 
-#if LIKWID
-	likwid_markerInit();
-#endif
-
-	FASTQ fastq(filename);
+	mmapFASTQ fastq(filename);
 	SeqPack pack(SLEN);
 	Sequence seq;
 
-	void* buffer1 = malloc(nbytes);
+	void* buffer = numa_alloc_onnode(nbytes, 0);
+	if (!buffer) ERROR("failed to malloc buffer (" << nbytes << " bytes)")
+	void* buffer1 = numa_alloc_onnode(nbytes, 0);
 	if (!buffer1) ERROR("failed to malloc buffer1 (" << nbytes << " bytes)")
-	void* buffer2 = malloc(nbytes);
+	void* buffer2 = numa_alloc_onnode(nbytes, 0);
 	if (!buffer2) ERROR("failed to malloc buffer2 (" << nbytes << " bytes)")
 
+	omp_set_dynamic(0);
+
+	cout << "benchmem: found " << omp_get_num_procs() << " procs" << endl;
+
+	nthreads = omp_get_max_threads();
+	cout << "benchmem: found " << nthreads << " threads" << endl;
+
+	init_papi_library();
+	init_papi_threads();
+
+	CounterGroup counters;
+	init_papi_counters(PAPI_UTIL_NEHALEM_L3, &counters);
+
+	char prefix[128];
+
+	/***** Load FASTQ file *****/
 	TIC(load_fastq)
 	{
-		char* dst = (char*)buffer1;
+		char* ids = (char*)buffer;
+		char* seqs = (char*)buffer + seq_offset;
 		while (fastq.next(seq)) {
-			strncpy(dst, seq.idline.data(), ILEN);
-			dst += ILEN;
-			memcpy(dst, seq.seq.data(), SLEN);
-			dst += SLEN;
-			memcpy(dst, seq.qual.data(), SLEN);
-			dst += SLEN;
+			memcpy(ids, seq.idline.data(), ILEN);
+			ids += ILEN;
+			memcpy(seqs, seq.seq.data(), SLEN);
+			seqs += SLEN;
+			memcpy(seqs, seq.qual.data(), SLEN);
+			seqs += SLEN;
 			if (++nfound == nreads) break;
 		}
 	}
@@ -186,191 +280,180 @@ int main(int argc, char** argv)
 
 	NOTIFY("found " << nfound << " reads")
 
+	memcpy(buffer1, buffer, LEN * nreads);
+
+	CHECK(buffer1)
+	ZERO(buffer2)
+
 	/***** MEMCPY *****/
 	TIC(time_memcpy)
 	memcpy(buffer2, buffer1, LEN * nreads);
 	TOC(time_memcpy)
 
-	memset(buffer1, 0x00, nbytes);
+	CHECK(buffer2)
+	ZERO(buffer1)
 
-	/***** SEQDB *****/
-	TIC(time_pack)
-#pragma omp parallel for
-	for (size_t i=0; i<nreads; i++) {
-		char* src = (char*)buffer2 + LEN * i;
-		uint8_t* dst = (uint8_t*)buffer1 + ULEN * i;
-		memcpy(dst, src, ILEN);
-		pack.pack(src + ILEN, src + ULEN, dst + ILEN);
+	/***** SeqPack *****/
+
+#pragma omp parallel
+{
+	#pragma omp master
+	{	
+		TIC(time_pack)
+		memcpy(buffer1, buffer2, seq_offset);
 	}
-	TOC(time_pack)
 
-	memset(buffer2, 0x00, nbytes);
+	const char* src = (char*)buffer2 + seq_offset;
+	uint8_t* dst = (uint8_t*)buffer1 + seq_offset;
 
-	TIC(time_unpack)
-#pragma omp parallel for
+	#pragma omp barrier
+	#pragma omp for
 	for (size_t i=0; i<nreads; i++) {
-		uint8_t* src = (uint8_t*)buffer1 + ULEN * i;
-		char* dst = (char*)buffer2 + LEN * i;
-		memcpy(dst, src, ILEN);
-		pack.unpack(src + ILEN, dst + ILEN, dst + ULEN);
+		pack.pack(src + 2*i*SLEN, src + (2*i+1)*SLEN, dst + i*SLEN);
 	}
-	TOC(time_unpack)
 
-	memset(buffer2, 0x00, nbytes);
+	#pragma omp barrier
+	#pragma omp master
+	{	
+		TOC(time_pack)
+	}
+} // parallel
 
-	TIC(time_unpack_v2)
-#pragma omp parallel for
+	ZERO(buffer2)
+
+#pragma omp parallel
+{
+	#pragma omp master
+	{
+		TIC(time_unpack)
+		memcpy(buffer2, buffer1, seq_offset);
+	}
+
+	const uint8_t* src = (uint8_t*)buffer1 + seq_offset;
+	char* dst = (char*)buffer2 + seq_offset;
+
+	#pragma omp barrier
+	#pragma omp for
 	for (size_t i=0; i<nreads; i++) {
-		uint8_t* src = (uint8_t*)buffer1 + ULEN * i;
-		char* dst = (char*)buffer2 + LEN * i;
-		memcpy(dst, src, ILEN);
-		pack.unpack_v2(src + ILEN, dst + ILEN, dst + ULEN);
+		pack.unpack(src + i*SLEN, dst + 2*i*SLEN, dst + (2*i+1)*SLEN);
 	}
-	TOC(time_unpack_v2)
 
-	memset(buffer1, 0x00, nbytes);
+	#pragma omp barrier
+	#pragma omp master
+	{
+		TOC(time_unpack)
+	}
+} // parallel
+
+	CHECK(buffer2)
+	ZERO(buffer1)
 
 	/***** BLOSC *****/
-	int bt = omp_get_max_threads();
-	cerr << "benchmem: setting BLOSC nthreads = " << bt << endl;
-	blosc_set_nthreads(bt);
-
 	vector<size_t> block_index;
 	size_t last_blocksize;
 
-#if 0
-	/* level 2 */
-	TIC(time_blosc_compress2)
-	last_blocksize = test_blosc_compress(
-								buffer1, buffer2, block_index, LEN, nreads, 2);
-	TOC(time_blosc_compress2)
-
-	memset(buffer2, 0x00, nbytes);
-
-	TIC(time_blosc_decompress2)
-	test_blosc_decompress(buffer1, buffer2, block_index, last_blocksize);
-	TOC(time_blosc_decompress2)
-
-	memset(buffer1, 0x00, nbytes);
-#endif
-
-	/* level 4 */
 	block_index.clear();
 
-	TIC(time_blosc_compress4)
+	blosc_set_nthreads(nthreads);
+
+	TIC(time_blosc_compress)
 	last_blocksize = test_blosc_compress(
-								buffer1, buffer2, block_index, LEN, nreads, 4);
-	TOC(time_blosc_compress4)
+			buffer1, buffer2, block_index, LEN, nreads, nbytes, BLOSC_LEVEL);
+	TOC(time_blosc_compress)
 
-	memset(buffer2, 0x00, nbytes);
+	ZERO(buffer2)
 
-	TIC(time_blosc_decompress4)
+	TIC(time_blosc_decompress)
 	test_blosc_decompress(buffer1, buffer2, block_index, last_blocksize);
-	TOC(time_blosc_decompress4)
+	TOC(time_blosc_decompress)
 
-	memset(buffer1, 0x00, nbytes);
-
-#if 0
-	/* level 9 */
-	block_index.clear();
-
-	TIC(time_blosc_compress9)
-	last_blocksize = test_blosc_compress(
-								buffer1, buffer2, block_index, LEN, nreads, 9);
-	TOC(time_blosc_compress9)
-
-	memset(buffer2, 0x00, nbytes);
-
-	TIC(time_blosc_decompress9)
-	test_blosc_decompress(buffer1, buffer2, block_index, last_blocksize);
-	TOC(time_blosc_decompress9)
-
-	memset(buffer1, 0x00, nbytes);
-#endif
+	CHECK(buffer2)
+	ZERO(buffer1)
 
 	/***** SeqPack + BLOSC *****/
 	block_index.clear();
 
-	TIC(time_pack_blosc)
-#pragma omp parallel for
-	for (size_t i=0; i<nreads; i++) {
-		char* src = (char*)buffer2 + LEN * i;
-		uint8_t* dst = (uint8_t*)buffer1 + ULEN * i;
-		memcpy(dst, src, ILEN);
-		pack.pack(src + ILEN, src + ULEN, dst + ILEN);
+#pragma omp parallel
+{
+	#pragma omp master
+	{	
+		TIC(time_pack_blosc)
+		memcpy(buffer1, buffer2, seq_offset);
 	}
-	last_blocksize = test_blosc_compress(
-								buffer2, buffer1, block_index, ULEN, nreads, 4);
-	TOC(time_pack_blosc)
 
-	memset(buffer1, 0x00, nbytes);
+	const char* src = (char*)buffer2 + seq_offset;
+	uint8_t* dst = (uint8_t*)buffer1 + seq_offset;
 
-	TIC(time_unpack_blosc)
-	test_blosc_decompress(buffer2, buffer1, block_index, last_blocksize);
-#pragma omp parallel for
+	#pragma omp barrier
+	#pragma omp for
 	for (size_t i=0; i<nreads; i++) {
-		uint8_t* src = (uint8_t*)buffer1 + ULEN * i;
-		char* dst = (char*)buffer2 + LEN * i;
-		memcpy(dst, src, ILEN);
-		pack.unpack(src + ILEN, dst + ILEN, dst + ULEN);
+		pack.pack(src + 2*i*SLEN, src + (2*i+1)*SLEN, dst + i*SLEN);
 	}
-	TOC(time_unpack_blosc)
 
-	memset(buffer1, 0x00, nbytes);
+	#pragma omp barrier
+	#pragma omp master
+	{	
+		last_blocksize = test_blosc_compress(
+			buffer2, buffer1, block_index, ULEN, nreads, nbytes, BLOSC_LEVEL);
+		TOC(time_pack_blosc)
+	}
+} // parallel
+
+	ZERO(buffer1)
+
+#pragma omp parallel
+{
+	#pragma omp master
+	{
+		TIC(time_unpack_blosc)
+		test_blosc_decompress(buffer2, buffer1, block_index, last_blocksize);
+		memcpy(buffer2, buffer1, seq_offset);
+	}
+
+	const uint8_t* src = (uint8_t*)buffer1 + seq_offset;
+	char* dst = (char*)buffer2 + seq_offset;
+
+	#pragma omp barrier
+	#pragma omp for
+	for (size_t i=0; i<nreads; i++) {
+		pack.unpack(src + i*SLEN, dst + 2*i*SLEN, dst + (2*i+1)*SLEN);
+	}
+
+	#pragma omp barrier
+	#pragma omp master
+	{
+		TOC(time_unpack_blosc)
+	}
+} // parallel
+
+	CHECK(buffer2)
+	ZERO(buffer1)
 
 	/***** ZLIB *****/
-#if 0
-	block_index.clear();
 
-	/* level 2 */
-	TIC(time_zlib_compress2)
-	last_blocksize = test_zlib_compress(
-									buffer1, buffer2, block_index, nreads, 2);
-	TOC(time_zlib_compress2)
+	/* This test is much slower than the others... skip when the env. var.
+	   is set. */
+	if (getenv("BENCHMEM_SKIP_ZLIB") == NULL)
+	{
+		block_index.clear();
 
-	memset(buffer2, 0x00, nbytes);
+		TIC(time_zlib_compress)
+		last_blocksize = test_zlib_compress(
+							buffer1, buffer2, block_index, nreads, nbytes, 6);
+		TOC(time_zlib_compress)
 
-	TIC(time_zlib_decompress2)
-	test_zlib_decompress(buffer1, buffer2, block_index, last_blocksize);
-	TOC(time_zlib_decompress2)
+		ZERO(buffer2)
 
-	memset(buffer1, 0x00, nbytes);
-#endif
+		TIC(time_zlib_decompress)
+		test_zlib_decompress(buffer1, buffer2, block_index, last_blocksize);
+		TOC(time_zlib_decompress)
 
-	/* level 6 */
-	block_index.clear();
+		CHECK(buffer2)
+	}
 
-	TIC(time_zlib_compress6)
-	last_blocksize = test_zlib_compress(
-									buffer1, buffer2, block_index, nreads, 6);
-	TOC(time_zlib_compress6)
-
-	memset(buffer2, 0x00, nbytes);
-
-	TIC(time_zlib_decompress6)
-	test_zlib_decompress(buffer1, buffer2, block_index, last_blocksize);
-	TOC(time_zlib_decompress6)
-
-#if 0
-	memset(buffer1, 0x00, nbytes);
-
-	/* level 9 */
-	block_index.clear();
-
-	TIC(time_zlib_compress9)
-	last_blocksize = test_zlib_compress(
-									buffer1, buffer2, block_index, nreads, 9);
-	TOC(time_zlib_compress9)
-
-	memset(buffer2, 0x00, nbytes);
-
-	TIC(time_zlib_decompress9)
-	test_zlib_decompress(buffer1, buffer2, block_index, last_blocksize);
-	TOC(time_zlib_decompress9)
-#endif
-
-#if LIKWID
-	likwid_markerClose();
-#endif
+	/***** cleanup *****/
+	numa_free(buffer, nbytes);
+	numa_free(buffer1, nbytes);
+	numa_free(buffer2, nbytes);
 }
 

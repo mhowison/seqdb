@@ -1,14 +1,30 @@
 #!/bin/bash
-#PBS -l nodes=1:ppn=12:gb96,walltime=4:00:00
-#PBS -j eo
-#PBS -q timeshare
+#SBATCH -c 12
+#SBATCH --mem=90G
+#SBATCH -t 2:00:00
 
-module load intel hdf/1.8.8
+ulimit -c unlimited
+set -e
 
-cd $PBS_O_WORKDIR
+export OMP_NUM_THREADS=12
+export KMP_AFFINITY="proclist=[12-23]"
 
-export OMP_NUM_THREADS=$PBS_NUM_PPN
-export KMP_AFFINITY=granularity=thread,verbose,compact
+FASTQ=/users/mhowison/data/seqdb/SRR493233_1.filt.fastq
 
-python benchmem.py
+N=256
+for i in {1..14}; do
+	N=$((N*2))
+	./benchmem $FASTQ $N
+	for t in {1..9}; do
+		BENCHMEM_SKIP_ZLIB=1 ./benchmem $FASTQ $N
+	done
+done
+
+for t in {1..15}; do
+	N=256
+	for i in {1..14}; do
+		N=$((N*2))
+		BENCHMEM_SKIP_ZLIB=1 ./benchmem $FASTQ $N
+	done
+done
 

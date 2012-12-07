@@ -46,12 +46,6 @@ FASTQ::FASTQ(const char* filename)
 	line.reserve(128);
 }
 
-FASTQ::~FASTQ() {}
-bool FASTQ::good() { return true; }
-bool FASTQ::next(Sequence& seq) { return true; }
-void FASTQ::next_line(string& buf) {}
-bool FASTQ::next_line(char* buf, size_t count) { return true; }
-
 void FASTQ::check_delim(char delim)
 {
 	if (delim != FASTQ_DELIM)
@@ -99,7 +93,7 @@ mmapFASTQ::~mmapFASTQ()
 	if (errno) PERROR("could not close file '" << filename << "'")
 }
 
-bool mmapFASTQ::good() { return (nchar <= size); }
+bool mmapFASTQ::good() { return (nchar < size); }
 
 bool mmapFASTQ::next(Sequence& seq)
 {
@@ -119,7 +113,7 @@ bool mmapFASTQ::next(Sequence& seq)
 	/* Quality line. */
 	next_line(seq.qual);
 
-	return (nchar <= size);
+	return (nchar < size);
 }
 
 void mmapFASTQ::next_line(string& buf)
@@ -136,7 +130,7 @@ void mmapFASTQ::next_line(string& buf)
 
 bool mmapFASTQ::next_line(char* buf, size_t count)
 {
-	if (nchar + count + 1 > size) return false;
+	//if (nchar + count + 1 > size) return false;
 	char* start = input + nchar;
 	char* c = (char*)memchr(start, '\n', count + 1);
 	if (c == NULL)
@@ -146,7 +140,7 @@ bool mmapFASTQ::next_line(char* buf, size_t count)
 	memcpy(buf, start, n - 1);
 	nchar += n;
 	nline++;
-	return true;
+	return (nchar <= size);
 }
 
 streamFASTQ::streamFASTQ(const char* filename) : FASTQ(filename)
@@ -203,6 +197,6 @@ bool streamFASTQ::next_line(char* buf, size_t count)
 		      " has more than " << count << " characters")
 	memcpy(buf, line.data(), line.size());
 	nline++;
-	return true;
+	return input->good();
 }
 

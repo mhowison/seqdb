@@ -9,11 +9,10 @@ class FASTQ
 {
 	public:
 		FASTQ(const char* filename);
-		virtual ~FASTQ();
-		virtual bool good();
-		virtual bool next(Sequence& seq);
-		virtual void next_line(std::string& buf);
-		virtual bool next_line(char* buf, size_t count);
+		virtual bool good() = 0;
+		virtual bool next(Sequence& seq) = 0;
+		virtual void next_line(std::string& buf) = 0;
+		virtual bool next_line(char* buf, size_t count) = 0;
 		void check_delim(char delim);
 		void check_plus();
 

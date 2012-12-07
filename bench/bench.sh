@@ -1,119 +1,86 @@
 #!/bin/bash 
-#PBS -j eo
-#PBS -l nodes=1:ppn=12:gb96
-#PBS -l walltime=12:00:00
-#PBS -q timeshare
+#SBATCH -c 12
+#SBATCH --mem 90G
+#SBATCH -t 24:00:00
+#SBATCH -e bench-%j.out
+#SBATCH -o bench-%j.out
 
-module load hdf5/1.8.8
+#set -e
 
-export PATH=$HOME/seqdb/bin:$PATH
+export PATH=$PWD:$PATH
+TIME="$PWD/time -p"
 
-export KMP_AFFINITY=granularity=thread,scatter
-export GOMP_AFFINITY=0-11
-export OMP_NUM_THREADS=$PBS_NUM_PPN
+export OMP_NUM_THREADS=12
+export KMP_AFFINITY="proclist=[12-23]"
 
 cd /dev/shm
+rm -f *
 
 SRC=$HOME/data/seqdb
 
-INPUT="ERR000018.filt.fastq"
-SLEN=36
-ILEN=50
-export SEQDB_BLOCKSIZE=928050
+bench() {
+  INPUT=/tmp/$1
+  SLEN=$2
+  ILEN=$3
 
-INPUT="SRR493233_1.filt.fastq"
-SLEN=100
-ILEN=61
-export SEQDB_BLOCKSIZE=432251
+  echo "INPUT=$1"
+  echo "OMP_NUM_THREADS=$OMP_NUM_THREADS"
+  echo "SEQDB_BLOCKSIZE=$SEQDB_BLOCKSIZE"
 
-#INPUT="SRR497004_1.filt.fastq"
-#SLEN=51
-#ILEN=91
-#export SEQDB_BLOCKSIZE=1229250
-#
-echo "INPUT=$INPUT"
-echo "OMP_NUM_THREADS=$OMP_NUM_THREADS"
-echo "SEQDB_BLOCKSIZE=$SEQDB_BLOCKSIZE"
+  DIFF="diff -q"
+  STAT="stat -c stat:%s"
 
-DIFF="diff -q"
-STAT="stat -c stat:%s"
+  echo "name:cp"
+  $TIME cp $SRC/$1 $INPUT
+  $STAT $INPUT
 
-echo "name:cp"
-usage cp $SRC/$INPUT $INPUT
-$STAT $INPUT
+  $TIME cp $INPUT 1
+  rm 1
 
-usage cp $INPUT 1
-rm 1
+  echo "name:seqdb"
+  $TIME seqdb-compress $SLEN $ILEN $INPUT 1
+  $TIME seqdb-extract 1 >2
+  $DIFF $INPUT 2
+  $STAT 1
+  rm 1 2
 
-echo "name:reprint"
-usage fastq_reprint -l $SLEN -d $ILEN -i $INPUT >1
-$DIFF $INPUT 1
-$STAT 1
-rm 1
+  echo "name:dsrc"
+  $TIME dsrc c $INPUT 1
+  $TIME dsrc d 1 2
+  $DIFF $INPUT 2
+  $STAT 1
+  rm 1 2
 
-usage fastq_reprint -l $SLEN -d $ILEN -i $INPUT >1
-rm 1
+  echo "name:biohdf"
+  $TIME bioh5g_import_reads -f 1 -R "/reads" -i $INPUT -F fastq -s $SLEN -d $ILEN
+  $TIME bioh5g_export_reads -f 1 -R "/reads" -F fastq -o 2
+  $DIFF $INPUT 2
+  $STAT 1
+  rm 1 2
 
-#echo "name:gzip2"
-#usage gzip -2 -c $INPUT >1
-#usage gunzip -c 1 >2
-#$DIFF $INPUT 2
-#$STAT 1
-#rm 1 2
-#
-#echo "name:gzip9"
-#usage gzip -9 -c $INPUT >1
-#usage gunzip -c 1 >2
-#$DIFF $INPUT 2
-#$STAT 1
-#rm 1 2
-#
-#echo "name:biohdf"
-#usage $HDF5_DIR/bin/bioh5g_import_reads -f 1 -R "/reads" -i $INPUT -F fastq -s $SLEN -d $ILEN
-#usage $HDF5_DIR/bin/bioh5g_export_reads -f 1 -R "/reads" -F fastq -o 2
-#$DIFF $INPUT 2
-#$STAT 1
-#rm 1 2
+  echo "name:biohdf-blosc"
+  $TIME bioh5g_import_reads -f 1 -R "/reads" -i $INPUT -F fastq -s $SLEN -d $ILEN -Z 4
+  $TIME bioh5g_export_reads -f 1 -R "/reads" -F fastq -o 2
+  $DIFF $INPUT 2
+  $STAT 1
+  rm 1 2
 
-echo "name:biohdf-blosc"
-usage $HOME/seqdb/bin/bioh5g_import_reads -f 1 -R "/reads" -i $INPUT -F fastq -s $SLEN -d $ILEN -Z 9
-usage $HOME/seqdb/bin/bioh5g_export_reads -f 1 -R "/reads" -F fastq -o 2
-$DIFF $INPUT 2
-$STAT 1
-rm 1 2
+  echo "name:gzip"
+  $TIME gzip -c $INPUT >1
+  $TIME gunzip -c 1 >2
+  $DIFF $INPUT 2
+  $STAT 1
+  rm 1 2
 
-#echo "name:seqdb"
-#usage fastq2seqdb -i $INPUT -o 1 -l $SLEN -d $ILEN
-#usage seqdb2fastq 1 >2
-#$DIFF $INPUT 2
-#$STAT 1
-#rm 1 2
-#
-#echo "name:pytables"
-#usage fastq2tables.py $INPUT 1 $SLEN $ILEN
-#usage tables2fastq.py 1 >2
-#$DIFF $INPUT 2
-#$STAT 1
-#rm 1 2
-#
-#echo "name:dsrc"
-#usage dsrc c $INPUT 1
-#usage dsrc d 1 2
-#$DIFF $INPUT 2
-#$STAT 1
-#rm 1 2
-#
-#echo "name:beetl"
-#usage Beetl bcr -i $INPUT -o 1 -m 0
-#usage Beetl bcr -i 1 -o 2 -m 0
-#$DIFF $INPUT 2
-#$STAT 1
-#rm 1 2
+  rm $INPUT
+}
 
-#echo "name:encseq"
-#usage gt encseq encode $INPUT
-#usage gt encseq decode $INPUT >2
-#$DIFF $INPUT 2
+bench SRR493328.fastq 302 43
+bench ERR000018.fastq 36 32
+bench SRR003177.fastq 4398 15
+bench SRR611141.fastq 406 8
+bench SRR448020.fastq 172 32
+bench SRR493233.fastq 200 40
 
-rm $INPUT
+rm -f /dev/shm/*
 

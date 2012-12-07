@@ -53,19 +53,43 @@ SeqPack::SeqPack(int length)
 		if (j < 0 || j > 127) ERROR("internal error building encoding table")
 		enc_base[j] = i;
 	}
-	for (uint8_t i=0; i<=50; i++) {
-		int j = (int)quals[i];
+	for (uint8_t i=1; i<=51; i++) {
+		int j = (int)quals[i-1];
 		if (j < 0 || j > 127) ERROR("internal error building encoding table")
 		enc_qual[j] = i;
 	}
 
 	/* create decoding tables */
 	for (int i=0; i<=4; i++) {
-		for (int j=0; j<=50; j++) {
+		for (int j=1; j<=51; j++) {
 			dec_base[i*51 + j] = bases[i];
-			dec_qual[i*51 + j] = quals[j];
+			dec_qual[i*51 + j] = quals[j-1];
 		}
 	}
+}
+
+void SeqPack::setEncBase(const uint8_t* _enc_base, size_t len)
+{
+	if (len != SEQPACK_ENC_SIZE) ERROR("incorrect size for encoding table")
+	memcpy(enc_base, _enc_base, SEQPACK_ENC_SIZE);
+}
+
+void SeqPack::setEncQual(const uint8_t* _enc_qual, size_t len)
+{
+	if (len != SEQPACK_ENC_SIZE) ERROR("incorrect size for encoding table")
+	memcpy(enc_qual, _enc_qual, SEQPACK_ENC_SIZE);
+}
+
+void SeqPack::setDecBase(const char* _dec_base, size_t len)
+{
+	if (len != SEQPACK_DEC_SIZE) ERROR("incorrect size for decoding table")
+	memcpy(dec_base, _dec_base, SEQPACK_DEC_SIZE);
+}
+
+void SeqPack::setDecQual(const char* _dec_qual, size_t len)
+{
+	if (len != SEQPACK_DEC_SIZE) ERROR("incorrect size for decoding table")
+	memcpy(dec_qual, _dec_qual, SEQPACK_DEC_SIZE);
 }
 
 void SeqPack::pack(

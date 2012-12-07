@@ -1,5 +1,5 @@
 OPT = -O3 -msse4.2
-LDLIBS = -lhdf5 -lsz -lz
+LDLIBS = -lhdf5 -lsz -lz -lnuma
 
 ifeq ($(CXX),icpc)
 CXXFLAGS += -openmp -fPIC -restrict
@@ -33,7 +33,5 @@ CXXFLAGS += -I$(HDF5)/include
 LDFLAGS += -L$(HDF5)/lib
 endif
 
-CC = gcc -std=c99
 CXXFLAGS += $(OPT)
-CFLAGS = $(CXXFLAGS)
 

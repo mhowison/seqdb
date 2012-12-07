@@ -1,3 +1,20 @@
+0.2.0
+=====
+
+* Fixed a bug in SeqPack where variable-length sequences were not stored
+  correctly.
+* When reading a SeqDB file, the SeqPack tables stored in the file itself are
+  now used. This will prevent future changes to the default tables from
+  breaking backward compatability with existing SeqDB files. FUTURE VERSIONS
+  MAY NOT SUPPORT SEQDB 0.1.X FILES!
+* Upgraded to Blosc 1.1.5. Modified Blosc to use thread pinning on Linux.
+* Added a very basic C API for adding native SeqDB calls to C codes (e.g.
+  velveth). You must link the C program against libseqdb with the C++ compiler.
+* Added an option to seqdb-extract to extract a single record.
+* seqdb-profile now displays a histogram of quality scores.
+* Added pkgconfig support.
+* FASTQ and SeqDB are now pure virtual classes.
+
 0.1.1
 =====
 

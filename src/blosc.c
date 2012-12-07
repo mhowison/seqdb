@@ -8,6 +8,11 @@
 **********************************************************************/
 
 
+#if HAVE_PTHREAD_SETAFFINITY_NP
+#define BLOSC_PIN_THREADS 1
+#define _GNU_SOURCE    /* Needed for thread pinning */
+#endif
+
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -34,6 +39,9 @@
   #include "win32/pthread.c"
 #else
   #include <pthread.h>
+#if BLOSC_PIN_THREADS
+  #include <sched.h>
+#endif
 #endif
 
 
@@ -59,7 +67,7 @@ int pid = 0;                    /* the PID for this process */
 /* Global variables for threads */
 int32_t nthreads = 1;            /* number of desired threads in pool */
 int32_t init_threads_done = 0;   /* pool of threads initialized? */
-int32_t end_threads = 0;         /* should exisiting threads end? */
+int32_t end_threads = 0;         /* should existing threads end? */
 int32_t init_sentinels_done = 0; /* sentinels initialized? */
 int32_t giveup_code;             /* error code when give up */
 int32_t nblock;                  /* block counter */
@@ -69,11 +77,13 @@ int32_t tids[BLOSC_MAX_THREADS];       /* ID per each thread */
 pthread_attr_t ct_attr;          /* creation time attributes for threads */
 #endif
 
-#if defined(_POSIX_BARRIERS) && (_POSIX_BARRIERS - 20012L) >= 0
+/* Have problems using posix barriers when symbol value is 200112L */
+/* This requires more investigation, but will work for the moment */
+#if defined(_POSIX_BARRIERS) && ( (_POSIX_BARRIERS - 20012L) >= 0 && _POSIX_BARRIERS != 200112L)
 #define _POSIX_BARRIERS_MINE
 #endif
 
-/* Syncronization variables */
+/* Synchronization variables */
 pthread_mutex_t count_mutex;
 #ifdef _POSIX_BARRIERS_MINE
 pthread_barrier_t barr_init;
@@ -169,7 +179,7 @@ uint8_t *my_malloc(size_t size)
 
 #if defined(_WIN32)
   /* A (void *) cast needed for avoiding a warning with MINGW :-/ */
-  block	=   (void *)_aligned_malloc(size, 16);
+  block = (void *)_aligned_malloc(size, 16);
 #elif defined __APPLE__
   /* Mac OS X guarantees 16-byte alignment in small allocs */
   block = malloc(size);
@@ -182,7 +192,7 @@ uint8_t *my_malloc(size_t size)
 
   if (block == NULL || res != 0) {
     printf("Error allocating memory!");
-    exit(1);
+    return NULL;
   }
 
   return (uint8_t *)block;
@@ -259,8 +269,8 @@ static int blosc_c(uint32_t blocksize, int32_t leftoverblock,
   neblock = blocksize / nsplits;
   for (j = 0; j < nsplits; j++) {
     dest += sizeof(int32_t);
-    ntbytes += sizeof(int32_t);
-    ctbytes += sizeof(int32_t);
+    ntbytes += (uint32_t)sizeof(int32_t);
+    ctbytes += (int32_t)sizeof(int32_t);
     maxout = neblock;
     if (ntbytes+maxout > maxbytes) {
       maxout = maxbytes - ntbytes;   /* avoid buffer overrun */
@@ -329,7 +339,7 @@ static int blosc_d(uint32_t blocksize, int32_t leftoverblock,
   for (j = 0; j < nsplits; j++) {
     cbytes = sw32(((uint32_t *)(src))[0]);   /* amount of compressed bytes */
     src += sizeof(int32_t);
-    ctbytes += sizeof(int32_t);
+    ctbytes += (int32_t)sizeof(int32_t);
     /* Uncompress */
     if (cbytes == neblock) {
       memcpy(_tmp, src, neblock);
@@ -460,7 +470,7 @@ int parallel_blosc(void)
 
 
 /* Convenience functions for creating and releasing temporaries */
-void create_temporaries(void)
+int create_temporaries(void)
 {
   int32_t tid;
   uint32_t typesize = params.typesize;
@@ -468,12 +478,21 @@ void create_temporaries(void)
   /* Extended blocksize for temporary destination.  Extended blocksize
    is only useful for compression in parallel mode, but it doesn't
    hurt serial mode either. */
-  uint32_t ebsize = blocksize + typesize*sizeof(int32_t);
+  uint32_t ebsize = blocksize + typesize*(uint32_t)sizeof(int32_t);
 
   /* Create temporary area for each thread */
   for (tid = 0; tid < nthreads; tid++) {
-    params.tmp[tid] = my_malloc(blocksize);
-    params.tmp2[tid] = my_malloc(ebsize);
+    uint8_t *tmp = my_malloc(blocksize);
+    uint8_t *tmp2;
+    if (tmp == NULL) {
+      return -1;
+    }
+    params.tmp[tid] = tmp;
+    tmp2 = my_malloc(ebsize);
+    if (tmp2 == NULL) {
+      return -1;
+    }
+    params.tmp2[tid] = tmp2;
   }
 
   init_temps_done = 1;
@@ -481,6 +500,7 @@ void create_temporaries(void)
   current_temp.nthreads = nthreads;
   current_temp.typesize = typesize;
   current_temp.blocksize = blocksize;
+  return 0;
 }
 
 
@@ -505,13 +525,20 @@ int do_job(void) {
 
   /* Initialize/reset temporaries if needed */
   if (!init_temps_done) {
-    create_temporaries();
+    int ret = create_temporaries();
+    if (ret < 0) {
+      return -1;
+    }
   }
   else if (current_temp.nthreads != nthreads ||
            current_temp.typesize != params.typesize ||
            current_temp.blocksize != params.blocksize) {
+    int ret;
     release_temporaries();
-    create_temporaries();
+    ret = create_temporaries();
+    if (ret < 0) {
+      return -1;
+    }
   }
 
   /* Run the serial version when nthreads is 1 or when the buffers are
@@ -590,7 +617,7 @@ int32_t compute_blocksize(int32_t clevel, uint32_t typesize, int32_t nbytes)
 
 /* The public routine for compression.  See blosc.h for docstrings. */
 int blosc_compress(int clevel, int doshuffle, size_t typesize, size_t nbytes,
-		   const void *src, void *dest, size_t destsize)
+      const void *src, void *dest, size_t destsize)
 {
   uint8_t *_dest=NULL;         /* current pos for destination buffer */
   uint8_t *flags;              /* flags for header.  Currently booked:
@@ -608,10 +635,11 @@ int blosc_compress(int clevel, int doshuffle, size_t typesize, size_t nbytes,
   /* Check buffer size limits */
   if (nbytes > BLOSC_MAX_BUFFERSIZE) {
     /* If buffer is too large, give up. */
-    fprintf(stderr, "Input buffer size cannot exceed %d MB\n",
-            BLOSC_MAX_BUFFERSIZE / MB);
-    exit(1);
+    fprintf(stderr, "Input buffer size cannot exceed %d bytes\n",
+            BLOSC_MAX_BUFFERSIZE);
+    return -1;
   }
+
   /* We can safely do this assignation now */
   nbytes_ = (uint32_t)nbytes;
 
@@ -691,6 +719,9 @@ int blosc_compress(int clevel, int doshuffle, size_t typesize, size_t nbytes,
   if (!(*flags & BLOSC_MEMCPYED)) {
     /* Do the actual compression */
     ntbytes = do_job();
+    if (ntbytes < 0) {
+      return -1;
+    }
     if ((ntbytes == 0) && (nbytes_+BLOSC_MAX_OVERHEAD <= maxbytes)) {
       /* Last chance for fitting `src` buffer in `dest`.  Update flags
        and do a memcpy later on. */
@@ -709,6 +740,9 @@ int blosc_compress(int clevel, int doshuffle, size_t typesize, size_t nbytes,
        cache size or multi-cores */
       params.ntbytes = BLOSC_MAX_OVERHEAD;
       ntbytes = do_job();
+      if (ntbytes < 0) {
+	return -1;
+      }
     }
     else {
       memcpy((uint8_t *)dest+BLOSC_MAX_OVERHEAD, src, nbytes_);
@@ -784,6 +818,9 @@ int blosc_decompress(const void *src, void *dest, size_t destsize)
       /* More effective with large buffers that are multiples of the
        cache size or multi-cores */
       ntbytes = do_job();
+      if (ntbytes < 0) {
+	return -1;
+      }
     }
     else {
       memcpy(dest, (uint8_t *)src+BLOSC_MAX_OVERHEAD, nbytes);
@@ -793,6 +830,9 @@ int blosc_decompress(const void *src, void *dest, size_t destsize)
   else {
     /* Do the actual decompression */
     ntbytes = do_job();
+    if (ntbytes < 0) {
+      return -1;
+    }
   }
 
   assert(ntbytes <= (int32_t)destsize);
@@ -859,7 +899,13 @@ int blosc_getitem(const void *src, int start, int nitems, void *dest)
   /* Initialize temporaries if needed */
   if (tmp == NULL || tmp2 == NULL || current_temp.blocksize < blocksize) {
     tmp = my_malloc(blocksize);
+    if (tmp == NULL) {
+      return -1;
+    }
     tmp2 = my_malloc(blocksize);
+    if (tmp2 == NULL) {
+      return -1;
+    }
     tmp_init = 1;
   }
 
@@ -889,7 +935,7 @@ int blosc_getitem(const void *src, int start, int nitems, void *dest)
     if (flags & BLOSC_MEMCPYED) {
       /* We want to memcpy only */
       memcpy((uint8_t *)dest + ntbytes,
-	     (uint8_t *)src + BLOSC_MAX_OVERHEAD + j*blocksize + startb,
+          (uint8_t *)src + BLOSC_MAX_OVERHEAD + j*blocksize + startb,
              bsize2);
       cbytes = bsize2;
     }
@@ -965,7 +1011,7 @@ void *t_blosc(void *tids)
 
     /* Get parameters for this thread before entering the main loop */
     blocksize = params.blocksize;
-    ebsize = blocksize + params.typesize*sizeof(int32_t);
+    ebsize = blocksize + params.typesize*(uint32_t)sizeof(int32_t);
     compress = params.compress;
     flags = params.flags;
     maxbytes = params.maxbytes;
@@ -1120,6 +1166,17 @@ int init_threads(void)
   pthread_attr_setdetachstate(&ct_attr, PTHREAD_CREATE_JOINABLE);
 #endif
 
+#if BLOSC_PIN_THREADS
+  /* Create a cpuset for thread pinning */
+  size_t cpu_set_size = CPU_ALLOC_SIZE(BLOSC_MAX_THREADS);
+  cpu_set_t* cpu_set = CPU_ALLOC(BLOSC_MAX_THREADS);
+  if (cpu_set == NULL) {
+    fprintf(stderr, "ERROR from CPU_ALLOC()\n");
+    perror("CPU_ALLOC");
+    exit(-1);
+  }
+#endif
+
   /* Finally, create the threads in detached state */
   for (tid = 0; tid < nthreads; tid++) {
     tids[tid] = tid;
@@ -1133,7 +1190,23 @@ int init_threads(void)
       fprintf(stderr, "\tError detail: %s\n", strerror(rc));
       exit(-1);
     }
+    /* Pin threads */
+#if BLOSC_PIN_THREADS
+    CPU_ZERO_S(cpu_set_size, cpu_set);
+    CPU_SET_S(tid, cpu_set_size, cpu_set);
+    //fprintf(stderr, "blosc: pinning thread %lu to CPU %d\n", threads[tid], tid)
+    rc = pthread_setaffinity_np(threads[tid], cpu_set_size, cpu_set);
+    if (rc) {
+      fprintf(stderr, "ERROR; return code from pthread_setaffinity_np() is %d\n", rc);
+      fprintf(stderr, "\tError detail: %s\n", strerror(rc));
+      exit(-1);
+    }
+#endif
   }
+
+#if BLOSC_PIN_THREADS
+    CPU_FREE(cpu_set);
+#endif
 
   init_threads_done = 1;                 /* Initialization done! */
   pid = (int)getpid();                   /* save the PID for this process */

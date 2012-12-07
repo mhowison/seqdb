@@ -78,9 +78,3 @@ SeqDB::~SeqDB()
 	delete pack;
 }
 
-void SeqDB::write(const Sequence&) {}
-bool SeqDB::read(Sequence&) {}
-void SeqDB::readAt(size_t, Sequence&) {}
-void SeqDB::importFASTQ(FASTQ*) {}
-void SeqDB::exportFASTQ(FILE*) {}
-

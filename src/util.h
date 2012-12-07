@@ -25,26 +25,6 @@
 	if (buf == NULL) ERROR("out of memory at " << __FILE__ << ":" << __LINE__)\
 }while(0);
 
-#if LIKWID
-#define TIC(label) likwid_markerStartRegion(STRINGIFY(label));
-#define TOC(label) likwid_markerStopRegion(STRINGIFY(label));
-#else
-#define TIC(label)\
-	double label ;\
-	do{\
-		struct timeval tv;\
-		gettimeofday(&tv, NULL);\
-		label = tv.tv_sec + 0.000001 * tv.tv_usec;\
-	}while(0);
-#define TOC(label)\
-	do{\
-		struct timeval tv;\
-		gettimeofday(&tv, NULL);\
-		label = tv.tv_sec + 0.000001 * tv.tv_usec - label ;\
-	}while(0);\
-	printf(STRINGIFY(label) "\t%g\n", label );
-#endif
-
 #define PRINT_VERSION cout << "SeqDB " << PACKAGE_VERSION << endl;
 
 #endif

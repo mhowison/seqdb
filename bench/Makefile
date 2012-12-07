@@ -2,26 +2,29 @@ include Make.inc
 
 TESTS = benchmem
 
-ifdef LIKWID
-CXXFLAGS += -I$(LIKWID)/include -DLIKWID
-LDLIBS += -L$(LIKWID)/lib -llikwid $(LDLIBS)
+ifdef PAPI
+CXXFLAGS += -I$(PAPI)/include
+LDLIBS += -L$(PAPI)/lib
 endif
+
+LDLIBS += -lpapi
 
 ifdef DSRC
 TESTS += benchrand
-CXXFLAGS += -I$(DSRC)/include
-LDLIBS += -L$(DSRC)/lib -ldsrc
+CXXFLAGS += -I$(DSRC)
+LDLIBS += -L$(DSRC) -ldsrc
 endif
 
 CXXFLAGS += -I../src
-CFLAGS = $(CXXFLAGS)
 
 all:	$(TESTS)
 
-benchmem:	benchmem.o ../src/libseqdb.a
+papi-util.o:	papi-util.c papi-util.h
+
+benchmem:	benchmem.o papi-util.o ../src/.libs/libseqdb.a
 	$(CXX) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 
-benchrand:	benchrand.o ../src/libseqdb.a
+benchrand:	benchrand.o papi-util.o ../src/.libs/libseqdb.a
 	$(CXX) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 
 clean:
