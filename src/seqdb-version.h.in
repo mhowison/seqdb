@@ -1,6 +1,0 @@
-#ifndef __SEQDB_VERSION_H__
-#define __SEQDB_VERSION_H__
-
-#define SEQDB_VERSION @PACKAGE_VERSION@
-
-#endif
